@@ -1,0 +1,62 @@
+database:
+  host: jdbc:mysql://rm-bp1468if9ov0dynp26o.mysql.rds.aliyuncs.com:3306/huobi_trading?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai
+  port: 3306
+  user: tzwzero
+  password: tzwzero
+  dbname: token_points_system
+  max_open_conns: 100
+  max_idle_conns: 10
+  conn_max_lifetime: 3600
+
+server:
+  port: 8080
+  read_timeout: 30
+  write_timeout: 30
+
+chains:
+  - id: sepolia
+    name: Sepolia Testnet
+    rpc_url: https://rpc.sepolia.org
+    ws_url: wss://rpc.sepolia.org
+    chain_id: 11155111
+    contract_address: "0x0000000000000000000000000000000000000000"
+    start_block: 0
+    confirmation_blocks: 6
+    pull_interval: 10
+    enabled: true
+    worker_pool_size: 16
+    queue_size: 10000
+    batch_size: 100
+    max_retries: 3
+    adaptive_mode: true
+
+  - id: base-sepolia
+    name: Base Sepolia Testnet
+    rpc_url: https://sepolia.base.org
+    ws_url: wss://sepolia.base.org
+    chain_id: 84532
+    contract_address: "0x0000000000000000000000000000000000000000"
+    start_block: 0
+    confirmation_blocks: 6
+    pull_interval: 10
+    enabled: true
+    worker_pool_size: 4
+    queue_size: 10000
+    batch_size: 100
+    max_retries: 3
+    adaptive_mode: true
+
+points:
+  calculation_rate: 0.05
+  calculation_interval: 3600
+  calculation_cron: "0 * * * *"
+
+backup:
+  enabled: true
+  interval: 86400
+  retention_days: 30
+
+logging:
+  level: info
+  format: json
+  output: stdout
