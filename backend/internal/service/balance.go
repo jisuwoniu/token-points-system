@@ -32,57 +32,61 @@ func NewBalanceService(
 	}
 }
 
+// ProcessTransfer 处理转账事件并更新用户余额
+// 记录余额历史并通过交易哈希确保幂等性
 func (s *BalanceService) ProcessTransfer(ctx context.Context, chainID string, event *blockchain.TransferEvent, timestamp time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	exists, err := s.historyRepo.ExistsByTxHash(ctx, event.TxHash)
 	if err != nil {
-		return errors.New(errors.ErrBalanceUpdate, "failed to check tx existence", err)
+		return errors.New(errors.ErrBalanceUpdate, "检查交易是否存在失败", err)
 	}
 	if exists {
 		logger.WithFields(map[string]interface{}{
 			"tx_hash": event.TxHash,
-		}).Debug("Transaction already processed")
+		}).Debug("交易已处理")
 		return nil
 	}
-	
-	if err := s.processUserTransfer(ctx, chainID, event.From.Hex(), event, timestamp, true); err != nil {
+
+	if err := s.processUserTransfer(ctx, chainID, event.From.Hex(), event, timestamp); err != nil {
 		return err
 	}
-	
+
 	if event.From != event.To {
-		if err := s.processUserTransfer(ctx, chainID, event.To.Hex(), event, timestamp, false); err != nil {
+		if err := s.processUserTransfer(ctx, chainID, event.To.Hex(), event, timestamp); err != nil {
 			return err
 		}
 	}
-	
+
 	return s.blockRepo.MarkProcessed(ctx, chainID, event.BlockNum)
 }
 
-func (s *BalanceService) processUserTransfer(ctx context.Context, chainID string, userAddr string, event *blockchain.TransferEvent, timestamp time.Time, isFrom bool) error {
+// processUserTransfer 处理单个用户的转账
+// 计算余额变动并记录到历史
+func (s *BalanceService) processUserTransfer(ctx context.Context, chainID string, userAddr string, event *blockchain.TransferEvent, timestamp time.Time) error {
 	currentBalance, err := s.balanceRepo.GetByUser(ctx, chainID, userAddr)
 	if err != nil {
 		return err
 	}
-	
+
 	balanceBefore := big.NewInt(0)
 	if currentBalance != nil {
 		balanceBefore.SetString(currentBalance.Balance, 10)
 	}
-	
+
 	changeAmount := event.GetChangeAmount(userAddr)
 	balanceAfter := new(big.Int).Add(balanceBefore, changeAmount)
-	
+
 	if balanceAfter.Sign() < 0 {
 		logger.WithFields(map[string]interface{}{
-			"user_address": userAddr,
+			"user_address":   userAddr,
 			"balance_before": balanceBefore.String(),
-			"change_amount": changeAmount.String(),
-		}).Error("Negative balance detected")
-		return errors.New(errors.ErrBalanceUpdate, "negative balance", nil)
+			"change_amount":  changeAmount.String(),
+		}).Error("检测到负余额")
+		return errors.New(errors.ErrBalanceUpdate, "负余额", nil)
 	}
-	
+
 	history := &models.BalanceHistory{
 		ChainID:       chainID,
 		UserAddress:   userAddr,
@@ -94,26 +98,27 @@ func (s *BalanceService) processUserTransfer(ctx context.Context, chainID string
 		BlockNumber:   event.BlockNum,
 		Timestamp:     timestamp,
 	}
-	
+
 	if err := s.historyRepo.Create(ctx, history); err != nil {
-		return errors.New(errors.ErrBalanceUpdate, "failed to create history", err)
+		return errors.New(errors.ErrBalanceUpdate, "创建历史记录失败", err)
 	}
-	
+
 	if err := s.balanceRepo.UpdateBalance(ctx, chainID, userAddr, balanceAfter.String()); err != nil {
-		return errors.New(errors.ErrBalanceUpdate, "failed to update balance", err)
+		return errors.New(errors.ErrBalanceUpdate, "更新余额失败", err)
 	}
-	
+
 	logger.WithFields(map[string]interface{}{
 		"chain_id":       chainID,
 		"user_address":   userAddr,
 		"balance_before": balanceBefore.String(),
 		"balance_after":  balanceAfter.String(),
 		"change_type":    history.ChangeType,
-	}).Info("Balance updated")
-	
+	}).Info("余额已更新")
+
 	return nil
 }
 
+// GetUserBalance 获取用户在指定链上的当前余额
 func (s *BalanceService) GetUserBalance(ctx context.Context, chainID, userAddress string) (string, error) {
 	balance, err := s.balanceRepo.GetByUser(ctx, chainID, userAddress)
 	if err != nil {
