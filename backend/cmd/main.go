@@ -132,9 +132,29 @@ func startChainListener(ctx context.Context, chainCfg config.ChainConfig, balanc
 	}
 	defer client.Close()
 
-	listener := blockchain.NewEventListener(&chainCfg, client)
+	// 从数据库获取最后处理的区块号
+	lastProcessedBlock, err := blockRepo.GetLastProcessed(ctx, chainCfg.ID)
+	if err != nil {
+		logger.Error("Failed to get last processed block:", err)
+		return
+	}
 
-	go listener.Start(ctx, chainCfg.StartBlock)
+	// 如果数据库中没有记录，使用配置文件中的StartBlock
+	startBlock := lastProcessedBlock
+	if startBlock == 0 && chainCfg.StartBlock > 0 {
+		startBlock = chainCfg.StartBlock
+	}
+
+	logger.WithFields(map[string]interface{}{
+		"chain_id":             chainCfg.ID,
+		"start_block":          startBlock,
+		"last_processed_block": lastProcessedBlock,
+		"config_start_block":   chainCfg.StartBlock,
+	}).Info("启动链监听器")
+
+	listener := blockchain.NewEventListener(&chainCfg, client, blockRepo)
+
+	go listener.Start(ctx, startBlock)
 
 	for {
 		select {

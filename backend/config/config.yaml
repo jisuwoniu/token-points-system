@@ -16,8 +16,8 @@ server:
 chains:
   - id: sepolia
     name: Sepolia Testnet
-    rpc_url: https://rpc.sepolia.org
-    ws_url: wss://rpc.sepolia.org
+    rpc_url: https://ethereum-sepolia.publicnode.com
+    ws_url: wss://ethereum-sepolia.publicnode.com
     chain_id: 11155111
     contract_address: "0x0000000000000000000000000000000000000000"
     start_block: 0

@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"gorm.io/gorm"
 	"token-points-system/internal/models"
+
+	"gorm.io/gorm"
 )
 
 type BlockRepository struct {

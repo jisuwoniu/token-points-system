@@ -6,21 +6,24 @@ import (
 	"time"
 
 	"token-points-system/internal/config"
+	"token-points-system/internal/repository"
 	"token-points-system/pkg/logger"
 )
 
 type EventListener struct {
 	chainCfg     *config.ChainConfig
 	client       *Client
+	blockRepo    *repository.BlockRepository
 	eventChan    chan *TransferEvent
 	stopChan     chan struct{}
-	isProcessing int32 // 原子标志：0=空闲，1=处理中
+	isProcessing int32
 }
 
-func NewEventListener(chainCfg *config.ChainConfig, client *Client) *EventListener {
+func NewEventListener(chainCfg *config.ChainConfig, client *Client, blockRepo *repository.BlockRepository) *EventListener {
 	return &EventListener{
 		chainCfg:  chainCfg,
 		client:    client,
+		blockRepo: blockRepo,
 		eventChan: make(chan *TransferEvent, 1000),
 		stopChan:  make(chan struct{}),
 	}
@@ -108,8 +111,8 @@ func (l *EventListener) processNewBlocks(ctx context.Context, lastBlock int64) (
 		batchSize = maxBatchSize
 	}
 
-	if confirmedBlock-startBlock > batchSize {
-		confirmedBlock = startBlock + batchSize
+	if confirmedBlock-startBlock >= batchSize {
+		confirmedBlock = startBlock + batchSize - 1
 	}
 
 	logger.WithFields(map[string]interface{}{
@@ -125,6 +128,24 @@ func (l *EventListener) processNewBlocks(ctx context.Context, lastBlock int64) (
 		return lastBlock, err
 	}
 
+	// 即使没有事件，也要标记区块已处理
+	if len(logs) == 0 {
+		logger.WithFields(map[string]interface{}{
+			"chain_id":        l.chainCfg.ID,
+			"start_block":     startBlock,
+			"confirmed_block": confirmedBlock,
+		}).Debug("区块范围内无Transfer事件")
+
+		// 标记区块已处理，避免重复拉取
+		if err := l.blockRepo.MarkProcessed(ctx, l.chainCfg.ID, confirmedBlock); err != nil {
+			logger.Error("标记区块已处理失败:", err)
+			return lastBlock, err
+		}
+
+		return confirmedBlock, nil
+	}
+
+	// 有事件时，发送到通道
 	for _, log := range logs {
 		event, err := ParseTransferLog(log)
 		if err != nil {
@@ -138,6 +159,9 @@ func (l *EventListener) processNewBlocks(ctx context.Context, lastBlock int64) (
 			logger.Warn("事件通道已满，丢弃事件")
 		}
 	}
+
+	// 注意：有事件时不在这里标记，由ProcessTransfer处理完成后标记
+	// 这样可以确保事件处理完成后才更新区块号
 
 	return confirmedBlock, nil
 }
