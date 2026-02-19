@@ -4,16 +4,19 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
+	"token-points-system/internal/config"
+	"token-points-system/pkg/errors"
+	"token-points-system/pkg/logger"
+
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"token-points-system/internal/config"
-	"token-points-system/pkg/errors"
-	"token-points-system/pkg/logger"
 )
 
 type Client struct {
@@ -110,4 +113,40 @@ func (c *Client) GetBlockTimestamp(ctx context.Context, blockNumber int64) (time
 		return time.Time{}, err
 	}
 	return time.Unix(int64(block.Time()), 0), nil
+}
+
+const erc20ABI = `[{"constant":true,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}]`
+
+func (c *Client) GetTokenBalance(ctx context.Context, userAddress string) (*big.Int, error) {
+	parsedABI, err := abi.JSON(strings.NewReader(erc20ABI))
+	if err != nil {
+		return nil, errors.New(errors.ErrEventParse, "解析ABI失败", err)
+	}
+
+	contractAddr := common.HexToAddress(c.chainCfg.ContractAddress)
+	userAddr := common.HexToAddress(userAddress)
+
+	data, err := parsedABI.Pack("balanceOf", userAddr)
+	if err != nil {
+		return nil, errors.New(errors.ErrEventParse, "打包调用数据失败", err)
+	}
+
+	result, err := c.client.CallContract(ctx, ethereum.CallMsg{
+		To:   &contractAddr,
+		Data: data,
+	}, nil)
+	if err != nil {
+		return nil, errors.New(errors.ErrRPConnect, "调用合约失败", err)
+	}
+
+	balance := new(big.Int)
+	balance.SetBytes(result)
+
+	logger.WithFields(map[string]interface{}{
+		"chain_id":     c.chainCfg.ID,
+		"user_address": userAddress,
+		"balance":      balance.String(),
+	}).Debug("从链上获取余额")
+
+	return balance, nil
 }

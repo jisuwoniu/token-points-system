@@ -142,3 +142,11 @@ func (s *PointsService) GetUserPoints(ctx context.Context, chainID, userAddress 
 	}
 	return points.TotalPoints, nil
 }
+
+func (s *PointsService) ListPoints(ctx context.Context, chainID string, offset, limit int) ([]models.UserPoints, error) {
+	return s.pointsRepo.GetByChainPaginated(ctx, chainID, offset, limit)
+}
+
+func (s *PointsService) CountPoints(ctx context.Context, chainID string) (int64, error) {
+	return s.pointsRepo.CountByChain(ctx, chainID)
+}

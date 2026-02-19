@@ -19,8 +19,8 @@ chains:
     rpc_url: https://ethereum-sepolia.publicnode.com
     ws_url: wss://ethereum-sepolia.publicnode.com
     chain_id: 11155111
-    contract_address: "0x0000000000000000000000000000000000000000"
-    start_block: 0
+    contract_address: "0x54358304f986f5D7540914D39d1d7F8BA9c2EB31"
+    start_block: 10258300
     confirmation_blocks: 6
     pull_interval: 10
     enabled: true
@@ -35,7 +35,7 @@ chains:
     rpc_url: https://sepolia.base.org
     ws_url: wss://sepolia.base.org
     chain_id: 84532
-    contract_address: "0x0000000000000000000000000000000000000000"
+    contract_address: "0xce8b06A9169966e2794780e8Db0995D31e7B3E21"
     start_block: 0
     confirmation_blocks: 6
     pull_interval: 10

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,9 +33,13 @@ func NewBalanceService(
 	}
 }
 
-// ProcessTransfer 处理转账事件并更新用户余额
-// 记录余额历史并通过交易哈希确保幂等性
-func (s *BalanceService) ProcessTransfer(ctx context.Context, chainID string, event *blockchain.TransferEvent, timestamp time.Time) error {
+const zeroAddress = "0x0000000000000000000000000000000000000000"
+
+type BalanceClient interface {
+	GetTokenBalance(ctx context.Context, userAddress string) (*big.Int, error)
+}
+
+func (s *BalanceService) ProcessTransfer(ctx context.Context, chainID string, event *blockchain.TransferEvent, timestamp time.Time, client BalanceClient) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -49,12 +54,14 @@ func (s *BalanceService) ProcessTransfer(ctx context.Context, chainID string, ev
 		return nil
 	}
 
-	if err := s.processUserTransfer(ctx, chainID, event.From.Hex(), event, timestamp); err != nil {
-		return err
+	if strings.ToLower(event.From.Hex()) != zeroAddress {
+		if err := s.processUserTransfer(ctx, chainID, event.From.Hex(), event, timestamp, client); err != nil {
+			return err
+		}
 	}
 
-	if event.From != event.To {
-		if err := s.processUserTransfer(ctx, chainID, event.To.Hex(), event, timestamp); err != nil {
+	if event.From != event.To && strings.ToLower(event.To.Hex()) != zeroAddress {
+		if err := s.processUserTransfer(ctx, chainID, event.To.Hex(), event, timestamp, client); err != nil {
 			return err
 		}
 	}
@@ -62,9 +69,7 @@ func (s *BalanceService) ProcessTransfer(ctx context.Context, chainID string, ev
 	return s.blockRepo.MarkProcessed(ctx, chainID, event.BlockNum)
 }
 
-// processUserTransfer 处理单个用户的转账
-// 计算余额变动并记录到历史
-func (s *BalanceService) processUserTransfer(ctx context.Context, chainID string, userAddr string, event *blockchain.TransferEvent, timestamp time.Time) error {
+func (s *BalanceService) processUserTransfer(ctx context.Context, chainID string, userAddr string, event *blockchain.TransferEvent, timestamp time.Time, client BalanceClient) error {
 	currentBalance, err := s.balanceRepo.GetByUser(ctx, chainID, userAddr)
 	if err != nil {
 		return err
@@ -83,8 +88,36 @@ func (s *BalanceService) processUserTransfer(ctx context.Context, chainID string
 			"user_address":   userAddr,
 			"balance_before": balanceBefore.String(),
 			"change_amount":  changeAmount.String(),
-		}).Error("检测到负余额")
-		return errors.New(errors.ErrBalanceUpdate, "负余额", nil)
+		}).Warn("检测到负余额，尝试从链上同步")
+
+		if client != nil {
+			onchainBalance, err := client.GetTokenBalance(ctx, userAddr)
+			if err != nil {
+				logger.Error("从链上获取余额失败:", err)
+				return errors.New(errors.ErrBalanceUpdate, "负余额且无法从链上同步", nil)
+			}
+
+			balanceBefore = onchainBalance
+			balanceAfter = new(big.Int).Add(balanceBefore, changeAmount)
+
+			if balanceAfter.Sign() < 0 {
+				logger.WithFields(map[string]interface{}{
+					"user_address":    userAddr,
+					"onchain_balance": onchainBalance.String(),
+					"change_amount":   changeAmount.String(),
+					"balance_after":   balanceAfter.String(),
+				}).Error("链上余额也不足")
+				return errors.New(errors.ErrBalanceUpdate, "余额不足", nil)
+			}
+
+			logger.WithFields(map[string]interface{}{
+				"user_address":    userAddr,
+				"onchain_balance": onchainBalance.String(),
+				"balance_after":   balanceAfter.String(),
+			}).Info("从链上同步余额成功")
+		} else {
+			return errors.New(errors.ErrBalanceUpdate, "负余额", nil)
+		}
 	}
 
 	history := &models.BalanceHistory{
@@ -118,7 +151,6 @@ func (s *BalanceService) processUserTransfer(ctx context.Context, chainID string
 	return nil
 }
 
-// GetUserBalance 获取用户在指定链上的当前余额
 func (s *BalanceService) GetUserBalance(ctx context.Context, chainID, userAddress string) (string, error) {
 	balance, err := s.balanceRepo.GetByUser(ctx, chainID, userAddress)
 	if err != nil {
@@ -128,4 +160,12 @@ func (s *BalanceService) GetUserBalance(ctx context.Context, chainID, userAddres
 		return "0", nil
 	}
 	return balance.Balance, nil
+}
+
+func (s *BalanceService) ListBalances(ctx context.Context, chainID string, offset, limit int) ([]models.UserBalance, error) {
+	return s.balanceRepo.GetByChainPaginated(ctx, chainID, offset, limit)
+}
+
+func (s *BalanceService) CountBalances(ctx context.Context, chainID string) (int64, error) {
+	return s.balanceRepo.CountByChain(ctx, chainID)
 }

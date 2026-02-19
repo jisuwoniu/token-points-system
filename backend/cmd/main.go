@@ -11,6 +11,7 @@ import (
 
 	"token-points-system/internal/blockchain"
 	"token-points-system/internal/config"
+	"token-points-system/internal/handler"
 	"token-points-system/internal/repository"
 	"token-points-system/internal/scheduler"
 	"token-points-system/internal/service"
@@ -65,7 +66,7 @@ func main() {
 	}
 	defer pointsScheduler.Stop()
 
-	router := setupHTTPRouter(balanceSvc, pointsSvc, pointsScheduler, cfg)
+	router := setupHTTPRouter(balanceSvc, pointsSvc, pointsScheduler, cfg, historyRepo, balanceRepo, pointsRepo, blockRepo, calcRepo)
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
@@ -153,7 +154,7 @@ func startChainListener(ctx context.Context, chainCfg config.ChainConfig, balanc
 	}).Info("启动链监听器")
 
 	listener := blockchain.NewEventListener(&chainCfg, client, blockRepo)
-
+	defer listener.Stop()
 	go listener.Start(ctx, startBlock)
 
 	for {
@@ -167,80 +168,40 @@ func startChainListener(ctx context.Context, chainCfg config.ChainConfig, balanc
 				continue
 			}
 
-			if err := balanceSvc.ProcessTransfer(ctx, chainCfg.ID, event, timestamp); err != nil {
+			if err := balanceSvc.ProcessTransfer(ctx, chainCfg.ID, event, timestamp, client); err != nil {
 				logger.Error("Failed to process transfer:", err)
 			}
 		}
 	}
 }
 
-func setupHTTPRouter(balanceSvc *service.BalanceService, pointsSvc *service.PointsService, scheduler *scheduler.PointsScheduler, cfg *config.Config) http.Handler {
+func setupHTTPRouter(balanceSvc *service.BalanceService, pointsSvc *service.PointsService, scheduler *scheduler.PointsScheduler, cfg *config.Config, historyRepo *repository.HistoryRepository, balanceRepo *repository.BalanceRepository, pointsRepo *repository.PointsRepository, blockRepo *repository.BlockRepository, calcRepo *repository.CalculationRepository) http.Handler {
 	router := http.NewServeMux()
 
-	router.HandleFunc("/api/balance/", handleGetBalance(balanceSvc))
-	router.HandleFunc("/api/points/", handleGetPoints(pointsSvc))
-	router.HandleFunc("/api/history/", handleGetHistory())
-	router.HandleFunc("/api/stats", handleGetStats())
-	router.HandleFunc("/api/recalculate", handleRecalculate(scheduler, cfg))
-	router.HandleFunc("/api/backup", handleBackup())
-	router.HandleFunc("/health", handleHealth)
+	balanceHandler := handler.NewBalanceHandler(balanceSvc)
+	pointsHandler := handler.NewPointsHandler(pointsSvc, pointsRepo, calcRepo)
+	historyHandler := handler.NewHistoryHandler(historyRepo)
+	statsHandler := handler.NewStatsHandler(balanceRepo, pointsRepo, historyRepo, blockRepo, cfg.Chains)
+	recalcHandler := handler.NewRecalculateHandler(scheduler, balanceRepo, cfg)
+	txHandler := handler.NewTransactionHandler(historyRepo)
+	backupHandler := handler.NewBackupHandler(calcRepo, cfg)
+
+	router.HandleFunc("/api/balance/", balanceHandler.GetBalance)
+	router.HandleFunc("/api/balance/list", balanceHandler.ListBalances)
+	router.HandleFunc("/api/points/", pointsHandler.GetPoints)
+	router.HandleFunc("/api/points/list", pointsHandler.ListPoints)
+	router.HandleFunc("/api/points/history", pointsHandler.GetPointsHistory)
+	router.HandleFunc("/api/history/", historyHandler.GetHistory)
+	router.HandleFunc("/api/stats", statsHandler.GetStats)
+	router.HandleFunc("/api/recalculate", recalcHandler.TriggerRecalculate)
+	router.HandleFunc("/api/transactions/recent", txHandler.GetRecentTransactions)
+	router.HandleFunc("/api/backup", backupHandler.CreateBackup)
+	router.HandleFunc("/api/backups", backupHandler.ListBackups)
+	router.HandleFunc("/api/backup/restore", backupHandler.RestoreBackup)
+	router.HandleFunc("/health", handler.HandleHealth)
 
 	fs := http.FileServer(http.Dir("./web"))
 	router.Handle("/", fs)
 
 	return router
-}
-
-func handleGetBalance(balanceSvc *service.BalanceService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
-	}
-}
-
-func handleGetPoints(pointsSvc *service.PointsService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
-	}
-}
-
-func handleRecalculate(scheduler *scheduler.PointsScheduler, cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
-	}
-}
-
-func handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"healthy"}`))
-}
-
-func handleGetHistory() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[]`))
-	}
-}
-
-func handleGetStats() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"totalUsers":0,"totalPoints":0,"totalTransactions":0}`))
-	}
-}
-
-func handleBackup() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
-	}
 }
