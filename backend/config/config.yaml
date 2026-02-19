@@ -1,8 +1,8 @@
 database:
-  host: rm-bp1468if9ov0dynp26o.mysql.rds.aliyuncs.com
+  host:
   port: 3306
-  user: tzwzero
-  password: tzwzero@2025
+  user:
+  password:
   dbname: token_points_system
   max_open_conns: 100
   max_idle_conns: 10
